@@ -1,0 +1,676 @@
+import { useState, useEffect, useRef } from "react";
+
+// ─── INITIAL DATA ───────────────────────────────────────────────────────────
+const ADMIN_PASSWORD = "daisy2024";
+
+const initialMenu = [
+  { id: 1, name: "Iced Caramel Latte", category: "Coffee", price: 150, image: "https://images.unsplash.com/photo-1461023058943-07fcbe16d735?w=400&q=80", available: true },
+  { id: 2, name: "Matcha Frappe", category: "Coffee", price: 180, image: "https://images.unsplash.com/photo-1515823662972-da6a2e4d3002?w=400&q=80", available: true },
+  { id: 3, name: "Classic Americano", category: "Coffee", price: 120, image: "https://images.unsplash.com/photo-1509042239860-f550ce710b93?w=400&q=80", available: true },
+  { id: 4, name: "Strawberry Milk Tea", category: "Non-Coffee", price: 160, image: "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400&q=80", available: true },
+  { id: 5, name: "Chocolate Smoothie", category: "Non-Coffee", price: 170, image: "https://images.unsplash.com/photo-1572490122747-3968b75cc699?w=400&q=80", available: true },
+  { id: 6, name: "Croissant", category: "Food", price: 95, image: "https://images.unsplash.com/photo-1555507036-ab1f4038808a?w=400&q=80", available: true },
+  { id: 7, name: "Cheese Cake Slice", category: "Food", price: 130, image: "https://images.unsplash.com/photo-1533134242443-d4fd215305ad?w=400&q=80", available: true },
+  { id: 8, name: "Club Sandwich", category: "Food", price: 200, image: "https://images.unsplash.com/photo-1528735602780-2552fd46c7af?w=400&q=80", available: true },
+];
+
+const initialOrders = [
+  {
+    id: "ORD-001", customer: "Maria Santos", phone: "09171234567", address: "123 Rizal St, Brgy. Poblacion", items: [{ name: "Iced Caramel Latte", qty: 2, price: 150 }, { name: "Croissant", qty: 1, price: 95 }],
+    total: 395, payment: "ewallet", status: "Preparing", time: "10:30 AM", date: "2024-12-01", unread: true,
+  },
+  {
+    id: "ORD-002", customer: "Juan dela Cruz", phone: "09281234567", address: "456 Mabini Ave, Brgy. San Jose", items: [{ name: "Club Sandwich", qty: 1, price: 200 }, { name: "Classic Americano", qty: 2, price: 120 }],
+    total: 440, payment: "cash", status: "Pending", time: "10:45 AM", date: "2024-12-01", unread: false,
+  },
+];
+
+const initialMessages = {
+  "09171234567": [
+    { from: "customer", text: "Hi! Is my order ready?", time: "10:35 AM" },
+    { from: "admin", text: "Hi Maria! Your order is being prepared. ETA 15 mins 🌼", time: "10:36 AM" },
+  ],
+  "09281234567": [
+    { from: "customer", text: "Can I add extra sandwich?", time: "10:47 AM" },
+  ],
+};
+
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
+const formatPHP = (n) => `₱${Number(n).toFixed(2)}`;
+const statusColor = (s) => ({ Pending: "#f59e0b", Preparing: "#3b82f6", "On the Way": "#8b5cf6", Delivered: "#10b981", Cancelled: "#ef4444" }[s] || "#6b7280");
+
+// ─── MAIN APP ─────────────────────────────────────────────────────────────────
+export default function DaisyCafe() {
+  const [view, setView] = useState("home"); // home | customer | admin-login | admin
+  const [adminTab, setAdminTab] = useState("dashboard");
+  const [menu, setMenu] = useState(initialMenu);
+  const [orders, setOrders] = useState(initialOrders);
+  const [messages, setMessages] = useState(initialMessages);
+  const [cart, setCart] = useState([]);
+  const [loginPw, setLoginPw] = useState("");
+  const [loginErr, setLoginErr] = useState("");
+  const [adminAuth, setAdminAuth] = useState(false);
+  const [orderForm, setOrderForm] = useState({ name: "", phone: "", address: "", payment: "cash" });
+  const [orderPlaced, setOrderPlaced] = useState(null);
+  const [activeChat, setActiveChat] = useState(null);
+  const [chatMsg, setChatMsg] = useState("");
+  const [editItem, setEditItem] = useState(null);
+  const [filterCat, setFilterCat] = useState("All");
+  const [orderSearch, setOrderSearch] = useState("");
+  const [notification, setNotification] = useState(null);
+  const [editOrderStatus, setEditOrderStatus] = useState({});
+  const msgEndRef = useRef(null);
+
+  useEffect(() => { msgEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [activeChat, messages]);
+
+  const notify = (msg, type = "success") => {
+    setNotification({ msg, type });
+    setTimeout(() => setNotification(null), 3000);
+  };
+
+  // ── CART ──────────────────────────────────────────────────────────────────
+  const addToCart = (item) => {
+    setCart((c) => {
+      const ex = c.find((x) => x.id === item.id);
+      if (ex) return c.map((x) => x.id === item.id ? { ...x, qty: x.qty + 1 } : x);
+      return [...c, { ...item, qty: 1 }];
+    });
+    notify(`${item.name} added to cart 🌼`);
+  };
+  const removeFromCart = (id) => setCart((c) => c.filter((x) => x.id !== id));
+  const updateQty = (id, delta) => setCart((c) => c.map((x) => x.id === id ? { ...x, qty: Math.max(1, x.qty + delta) } : x));
+  const cartTotal = cart.reduce((s, x) => s + x.price * x.qty, 0);
+
+  // ── ORDER PLACEMENT ────────────────────────────────────────────────────────
+  const placeOrder = () => {
+    if (!orderForm.name || !orderForm.phone || !orderForm.address) { notify("Please fill all fields", "error"); return; }
+    if (cart.length === 0) { notify("Cart is empty", "error"); return; }
+    const id = `ORD-${String(orders.length + 1).padStart(3, "0")}`;
+    const newOrder = {
+      id, customer: orderForm.name, phone: orderForm.phone, address: orderForm.address,
+      items: cart.map((x) => ({ name: x.name, qty: x.qty, price: x.price })),
+      total: cartTotal, payment: orderForm.payment, status: "Pending",
+      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      date: new Date().toISOString().split("T")[0], unread: true,
+    };
+    setOrders((o) => [newOrder, ...o]);
+    setMessages((m) => ({ ...m, [orderForm.phone]: [{ from: "customer", text: `Hi! I just placed order ${id}. Please confirm!`, time: newOrder.time }] }));
+    setOrderPlaced(newOrder);
+    setCart([]);
+    setOrderForm({ name: "", phone: "", address: "", payment: "cash" });
+  };
+
+  // ── ADMIN ──────────────────────────────────────────────────────────────────
+  const adminLogin = () => {
+    if (loginPw === ADMIN_PASSWORD) { setAdminAuth(true); setView("admin"); setLoginErr(""); }
+    else setLoginErr("Incorrect password. Try again.");
+  };
+
+  const sendAdminMsg = (phone) => {
+    if (!chatMsg.trim()) return;
+    const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    setMessages((m) => ({ ...m, [phone]: [...(m[phone] || []), { from: "admin", text: chatMsg, time }] }));
+    setChatMsg("");
+  };
+
+  const updateOrderStatus = (id, status) => {
+    setOrders((o) => o.map((x) => x.id === id ? { ...x, status } : x));
+    notify(`Order ${id} → ${status}`);
+  };
+
+  const saveEditItem = () => {
+    setMenu((m) => m.map((x) => x.id === editItem.id ? editItem : x));
+    setEditItem(null);
+    notify("Menu item updated!");
+  };
+
+  const deleteMenuItem = (id) => {
+    setMenu((m) => m.filter((x) => x.id !== id));
+    notify("Item removed from menu");
+  };
+
+  const addMenuItem = () => {
+    const newItem = { id: Date.now(), name: "New Item", category: "Coffee", price: 100, image: "https://images.unsplash.com/photo-1461023058943-07fcbe16d735?w=400&q=80", available: true };
+    setMenu((m) => [...m, newItem]);
+    setEditItem(newItem);
+  };
+
+  const totalRevenue = orders.filter((o) => o.status === "Delivered").reduce((s, o) => s + o.total, 0);
+  const pendingCount = orders.filter((o) => o.status === "Pending").length;
+  const unreadChats = Object.values(messages).flat().filter((m) => m.from === "customer").length;
+  const cats = ["All", ...new Set(menu.map((x) => x.category))];
+  const filteredMenu = filterCat === "All" ? menu : menu.filter((x) => x.category === filterCat);
+  const filteredOrders = orders.filter((o) =>
+    o.customer.toLowerCase().includes(orderSearch.toLowerCase()) ||
+    o.id.toLowerCase().includes(orderSearch.toLowerCase()) ||
+    o.status.toLowerCase().includes(orderSearch.toLowerCase())
+  );
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // RENDER
+  // ══════════════════════════════════════════════════════════════════════════
+  return (
+    <div style={{ fontFamily: "'Georgia', serif", minHeight: "100vh", background: "#fdf8f0" }}>
+      <style>{`
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Georgia', serif; }
+        .btn-primary { background: linear-gradient(135deg, #d4845a, #b85c38); color: white; border: none; padding: 10px 22px; border-radius: 25px; cursor: pointer; font-size: 14px; font-weight: 600; transition: all 0.2s; letter-spacing: 0.5px; }
+        .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 15px rgba(184,92,56,0.4); }
+        .btn-ghost { background: transparent; border: 2px solid #d4845a; color: #d4845a; padding: 8px 20px; border-radius: 25px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s; }
+        .btn-ghost:hover { background: #d4845a; color: white; }
+        .btn-small { padding: 5px 14px; font-size: 12px; border-radius: 20px; border: none; cursor: pointer; font-weight: 600; transition: all 0.2s; }
+        .card { background: white; border-radius: 16px; box-shadow: 0 2px 20px rgba(0,0,0,0.07); padding: 20px; }
+        .input { width: 100%; padding: 10px 14px; border: 1.5px solid #e8ddd0; border-radius: 10px; font-size: 14px; font-family: Georgia, serif; outline: none; background: #fffdf9; transition: border 0.2s; }
+        .input:focus { border-color: #d4845a; }
+        .tab { padding: 8px 18px; border: none; background: transparent; cursor: pointer; font-size: 13px; border-radius: 20px; transition: all 0.2s; font-family: Georgia, serif; font-weight: 600; color: #888; }
+        .tab.active { background: #d4845a; color: white; }
+        .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; }
+        .scroll-y { overflow-y: auto; }
+        ::-webkit-scrollbar { width: 5px; } ::-webkit-scrollbar-thumb { background: #d4845a44; border-radius: 10px; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .fade-in { animation: fadeIn 0.3s ease; }
+        @keyframes slideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+        .slide-in { animation: slideIn 0.3s ease; }
+        @media (max-width: 600px) { .grid-2 { grid-template-columns: 1fr !important; } }
+      `}</style>
+
+      {/* NOTIFICATION */}
+      {notification && (
+        <div style={{ position: "fixed", top: 20, right: 20, zIndex: 9999, background: notification.type === "error" ? "#ef4444" : "#10b981", color: "white", padding: "12px 20px", borderRadius: 12, fontSize: 14, fontWeight: 600, boxShadow: "0 4px 20px rgba(0,0,0,0.2)", animation: "fadeIn 0.3s ease" }}>
+          {notification.msg}
+        </div>
+      )}
+
+      {/* ── HOME SCREEN ─────────────────────────────────────────────────────── */}
+      {view === "home" && (
+        <div style={{ minHeight: "100vh", background: "linear-gradient(160deg, #fdf3e7 0%, #fde8d0 50%, #fdf0e0 100%)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24 }}>
+          {/* Decorative petals */}
+          <div style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", overflow: "hidden", pointerEvents: "none" }}>
+            {["🌼","🌸","🌼","🌸","🌼","🌸"].map((e,i) => (
+              <div key={i} style={{ position: "absolute", fontSize: 40, opacity: 0.12, top: `${[10,20,70,80,40,60][i]}%`, left: `${[5,85,10,80,50,30][i]}%`, transform: `rotate(${i*40}deg)` }}>{e}</div>
+            ))}
+          </div>
+          <div style={{ textAlign: "center", maxWidth: 480, width: "100%", position: "relative" }}>
+            <div style={{ fontSize: 72, marginBottom: 8 }}>🌼</div>
+            <h1 style={{ fontSize: 52, fontWeight: 800, color: "#b85c38", letterSpacing: "-1px", lineHeight: 1.1 }}>Daisy Café</h1>
+            <p style={{ color: "#c87d5a", fontSize: 17, marginBottom: 8, fontStyle: "italic" }}>Where every sip blooms ✨</p>
+            <div style={{ width: 60, height: 3, background: "linear-gradient(90deg, #d4845a, #b85c38)", borderRadius: 4, margin: "0 auto 32px" }} />
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <button className="btn-primary" style={{ fontSize: 17, padding: "16px 40px", borderRadius: 30, width: "100%" }} onClick={() => setView("customer")}>
+                🛒 Order Now
+              </button>
+              <button className="btn-ghost" style={{ fontSize: 15, padding: "14px 40px", borderRadius: 30, width: "100%" }} onClick={() => setView("admin-login")}>
+                🔐 Admin Access
+              </button>
+            </div>
+            <p style={{ marginTop: 24, color: "#bbb", fontSize: 12 }}>Powered by Daisy Café Business Platform</p>
+          </div>
+        </div>
+      )}
+
+      {/* ── ADMIN LOGIN ──────────────────────────────────────────────────────── */}
+      {view === "admin-login" && (
+        <div style={{ minHeight: "100vh", background: "linear-gradient(160deg, #1a0a00, #3d1a00)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <div className="card fade-in" style={{ maxWidth: 380, width: "100%", textAlign: "center", background: "rgba(255,255,255,0.97)" }}>
+            <div style={{ fontSize: 48, marginBottom: 8 }}>🔐</div>
+            <h2 style={{ color: "#b85c38", fontSize: 24, fontWeight: 800, marginBottom: 4 }}>Admin Login</h2>
+            <p style={{ color: "#999", fontSize: 13, marginBottom: 24 }}>Enter your password to access the dashboard</p>
+            <input className="input" type="password" placeholder="Enter admin password" value={loginPw}
+              onChange={(e) => setLoginPw(e.target.value)} onKeyDown={(e) => e.key === "Enter" && adminLogin()}
+              style={{ marginBottom: 12, textAlign: "center", fontSize: 18, letterSpacing: 4 }} />
+            {loginErr && <p style={{ color: "#ef4444", fontSize: 13, marginBottom: 12 }}>{loginErr}</p>}
+            <button className="btn-primary" style={{ width: "100%", padding: "12px" }} onClick={adminLogin}>Login to Dashboard</button>
+            <button style={{ marginTop: 14, background: "none", border: "none", color: "#aaa", cursor: "pointer", fontSize: 13 }} onClick={() => setView("home")}>← Back to Home</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── CUSTOMER ORDERING ────────────────────────────────────────────────── */}
+      {view === "customer" && !orderPlaced && (
+        <div style={{ maxWidth: 900, margin: "0 auto", padding: "0 0 100px 0" }}>
+          {/* Header */}
+          <div style={{ background: "linear-gradient(135deg, #b85c38, #d4845a)", padding: "24px 20px", textAlign: "center", position: "sticky", top: 0, zIndex: 100 }}>
+            <button style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)", background: "rgba(255,255,255,0.2)", border: "none", color: "white", width: 36, height: 36, borderRadius: "50%", cursor: "pointer", fontSize: 16 }} onClick={() => setView("home")}>←</button>
+            <h1 style={{ color: "white", fontSize: 26, fontWeight: 800 }}>🌼 Daisy Café</h1>
+            <p style={{ color: "rgba(255,255,255,0.8)", fontSize: 13 }}>Order fresh, delivered warm</p>
+          </div>
+
+          <div style={{ padding: 16 }}>
+            {/* Category Filter */}
+            <div style={{ display: "flex", gap: 8, overflowX: "auto", padding: "8px 0", marginBottom: 16, scrollbarWidth: "none" }}>
+              {cats.map((c) => (
+                <button key={c} className={`tab ${filterCat === c ? "active" : ""}`} onClick={() => setFilterCat(c)} style={{ whiteSpace: "nowrap" }}>{c}</button>
+              ))}
+            </div>
+
+            {/* Menu Grid */}
+            <div className="grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 24 }}>
+              {filteredMenu.filter((x) => x.available).map((item) => {
+                const inCart = cart.find((x) => x.id === item.id);
+                return (
+                  <div key={item.id} className="card fade-in" style={{ padding: 0, overflow: "hidden", border: inCart ? "2px solid #d4845a" : "2px solid transparent" }}>
+                    <div style={{ position: "relative" }}>
+                      <img src={item.image} alt={item.name} style={{ width: "100%", height: 130, objectFit: "cover" }} onError={(e) => e.target.src = "https://images.unsplash.com/photo-1461023058943-07fcbe16d735?w=400&q=80"} />
+                      <span style={{ position: "absolute", top: 8, left: 8, background: "#b85c38", color: "white", fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10 }}>{item.category}</span>
+                      {inCart && <span style={{ position: "absolute", top: 8, right: 8, background: "#10b981", color: "white", fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 10 }}>✓ {inCart.qty}</span>}
+                    </div>
+                    <div style={{ padding: "12px 12px 14px" }}>
+                      <p style={{ fontWeight: 700, fontSize: 14, color: "#2d1a0a", marginBottom: 2 }}>{item.name}</p>
+                      <p style={{ color: "#b85c38", fontWeight: 800, fontSize: 16, marginBottom: 10 }}>{formatPHP(item.price)}</p>
+                      {inCart ? (
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+                          <button className="btn-small" style={{ background: "#fee2e2", color: "#ef4444", minWidth: 30 }} onClick={() => updateQty(item.id, -1)}>−</button>
+                          <span style={{ fontWeight: 700 }}>{inCart.qty}</span>
+                          <button className="btn-small" style={{ background: "#d1fae5", color: "#10b981", minWidth: 30 }} onClick={() => updateQty(item.id, 1)}>+</button>
+                          <button className="btn-small" style={{ background: "#fee2e2", color: "#ef4444" }} onClick={() => removeFromCart(item.id)}>Remove</button>
+                        </div>
+                      ) : (
+                        <button className="btn-primary" style={{ width: "100%", padding: "8px", fontSize: 13 }} onClick={() => addToCart(item)}>Add to Cart</button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Order Form */}
+            {cart.length > 0 && (
+              <div className="card fade-in" style={{ marginBottom: 16 }}>
+                <h3 style={{ color: "#b85c38", fontWeight: 800, fontSize: 18, marginBottom: 16 }}>🛒 Your Order</h3>
+                {cart.map((x) => (
+                  <div key={x.id} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #f0e8e0", fontSize: 14 }}>
+                    <span>{x.name} × {x.qty}</span>
+                    <span style={{ fontWeight: 700, color: "#b85c38" }}>{formatPHP(x.price * x.qty)}</span>
+                  </div>
+                ))}
+                <div style={{ display: "flex", justifyContent: "space-between", marginTop: 12, fontWeight: 800, fontSize: 17, color: "#b85c38" }}>
+                  <span>Total</span><span>{formatPHP(cartTotal)}</span>
+                </div>
+              </div>
+            )}
+
+            {cart.length > 0 && (
+              <div className="card fade-in">
+                <h3 style={{ color: "#b85c38", fontWeight: 800, fontSize: 18, marginBottom: 16 }}>📋 Delivery Details</h3>
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <input className="input" placeholder="Your Full Name" value={orderForm.name} onChange={(e) => setOrderForm({ ...orderForm, name: e.target.value })} />
+                  <input className="input" placeholder="Phone Number (09xx...)" value={orderForm.phone} onChange={(e) => setOrderForm({ ...orderForm, phone: e.target.value })} />
+                  <textarea className="input" placeholder="Complete Delivery Address (House No., Street, Barangay, City...)" rows={3} value={orderForm.address} onChange={(e) => setOrderForm({ ...orderForm, address: e.target.value })} style={{ resize: "vertical" }} />
+                  <div>
+                    <p style={{ fontWeight: 700, fontSize: 14, marginBottom: 10, color: "#5a3a2a" }}>💳 Payment Method</p>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      {[
+                        { val: "cash", icon: "💵", label: "Cash on Delivery", desc: "Pay when your order arrives" },
+                        { val: "ewallet", icon: "📱", label: "E-Wallet", desc: "GCash, Maya, ShopeePay" },
+                        { val: "debit", icon: "💳", label: "Debit Card", desc: "Visa / Mastercard" },
+                      ].map((pm) => (
+                        <label key={pm.val} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", border: `2px solid ${orderForm.payment === pm.val ? "#d4845a" : "#e8ddd0"}`, borderRadius: 12, cursor: "pointer", background: orderForm.payment === pm.val ? "#fff8f3" : "white", transition: "all 0.2s" }}>
+                          <input type="radio" name="payment" value={pm.val} checked={orderForm.payment === pm.val} onChange={() => setOrderForm({ ...orderForm, payment: pm.val })} style={{ accentColor: "#d4845a" }} />
+                          <span style={{ fontSize: 22 }}>{pm.icon}</span>
+                          <div>
+                            <p style={{ fontWeight: 700, fontSize: 14, color: "#2d1a0a" }}>{pm.label}</p>
+                            <p style={{ fontSize: 12, color: "#999" }}>{pm.desc}</p>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <button className="btn-primary" style={{ width: "100%", padding: "16px", fontSize: 16, marginTop: 8 }} onClick={placeOrder}>
+                    🌼 Place Order — {formatPHP(cartTotal)}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── ORDER CONFIRMATION ───────────────────────────────────────────────── */}
+      {view === "customer" && orderPlaced && (
+        <div style={{ minHeight: "100vh", background: "linear-gradient(160deg, #fdf3e7, #fde8d0)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <div className="card fade-in" style={{ maxWidth: 440, width: "100%", textAlign: "center" }}>
+            <div style={{ fontSize: 60, marginBottom: 8 }}>🌼</div>
+            <h2 style={{ color: "#10b981", fontSize: 24, fontWeight: 800, marginBottom: 4 }}>Order Placed!</h2>
+            <p style={{ color: "#888", fontSize: 14, marginBottom: 20 }}>Thank you, {orderPlaced.customer}! We're preparing your order.</p>
+            <div style={{ background: "#fff8f3", border: "2px solid #e8ddd0", borderRadius: 12, padding: 16, marginBottom: 20, textAlign: "left" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                <span style={{ fontWeight: 700, color: "#b85c38" }}>Order ID</span>
+                <span style={{ fontWeight: 800 }}>{orderPlaced.id}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                <span style={{ fontWeight: 700, color: "#b85c38" }}>Total</span>
+                <span style={{ fontWeight: 800 }}>{formatPHP(orderPlaced.total)}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                <span style={{ fontWeight: 700, color: "#b85c38" }}>Payment</span>
+                <span style={{ fontWeight: 600, textTransform: "capitalize" }}>{orderPlaced.payment === "cash" ? "💵 Cash on Delivery" : orderPlaced.payment === "ewallet" ? "📱 E-Wallet" : "💳 Debit Card"}</span>
+              </div>
+              <div>
+                <span style={{ fontWeight: 700, color: "#b85c38" }}>Deliver to</span>
+                <p style={{ fontSize: 13, color: "#555", marginTop: 4 }}>{orderPlaced.address}</p>
+              </div>
+            </div>
+            <div style={{ background: "#f0fdf4", border: "1.5px solid #bbf7d0", borderRadius: 10, padding: 12, marginBottom: 20, fontSize: 13, color: "#16a34a" }}>
+              📞 Our team will contact you at <strong>{orderPlaced.phone}</strong> to confirm your order.
+            </div>
+            <button className="btn-primary" style={{ width: "100%", padding: 14 }} onClick={() => { setOrderPlaced(null); setView("home"); }}>
+              Back to Home
+            </button>
+            <button className="btn-ghost" style={{ width: "100%", padding: 12, marginTop: 10 }} onClick={() => { setOrderPlaced(null); }}>
+              Order More 🛒
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── ADMIN DASHBOARD ──────────────────────────────────────────────────── */}
+      {view === "admin" && adminAuth && (
+        <div style={{ display: "flex", minHeight: "100vh", background: "#f7f0e8" }}>
+          {/* Sidebar */}
+          <div style={{ width: 220, background: "linear-gradient(180deg, #1a0a00, #3d1a00)", display: "flex", flexDirection: "column", padding: "24px 0", position: "fixed", top: 0, left: 0, height: "100vh", zIndex: 200 }}>
+            <div style={{ textAlign: "center", padding: "0 16px 24px", borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
+              <div style={{ fontSize: 36 }}>🌼</div>
+              <h2 style={{ color: "white", fontSize: 16, fontWeight: 800 }}>Daisy Café</h2>
+              <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 11 }}>Business Dashboard</p>
+            </div>
+            <nav style={{ flex: 1, padding: "16px 10px", display: "flex", flexDirection: "column", gap: 4 }}>
+              {[
+                { id: "dashboard", icon: "📊", label: "Dashboard" },
+                { id: "orders", icon: "📦", label: "Orders", badge: pendingCount },
+                { id: "menu", icon: "🍽️", label: "Menu Manager" },
+                { id: "messages", icon: "💬", label: "Messages", badge: unreadChats },
+                { id: "customers", icon: "👥", label: "Customers" },
+              ].map((tab) => (
+                <button key={tab.id} onClick={() => setAdminTab(tab.id)} style={{ background: adminTab === tab.id ? "rgba(212,132,90,0.3)" : "transparent", border: adminTab === tab.id ? "1px solid rgba(212,132,90,0.5)" : "1px solid transparent", color: adminTab === tab.id ? "#f4b97b" : "rgba(255,255,255,0.6)", padding: "10px 14px", borderRadius: 10, cursor: "pointer", fontSize: 13, fontWeight: adminTab === tab.id ? 700 : 500, display: "flex", alignItems: "center", gap: 10, transition: "all 0.2s" }}>
+                  <span>{tab.icon}</span>
+                  <span style={{ flex: 1, textAlign: "left" }}>{tab.label}</span>
+                  {tab.badge > 0 && <span style={{ background: "#ef4444", color: "white", fontSize: 10, fontWeight: 800, padding: "1px 6px", borderRadius: 8 }}>{tab.badge}</span>}
+                </button>
+              ))}
+            </nav>
+            <div style={{ padding: "16px 10px", borderTop: "1px solid rgba(255,255,255,0.1)" }}>
+              <button onClick={() => { setAdminAuth(false); setView("home"); setLoginPw(""); }} style={{ width: "100%", background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.3)", color: "#fca5a5", padding: "9px", borderRadius: 10, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+                🚪 Logout
+              </button>
+            </div>
+          </div>
+
+          {/* Main Content */}
+          <div style={{ marginLeft: 220, flex: 1, padding: "24px 24px 40px", minHeight: "100vh" }}>
+            {/* ── DASHBOARD TAB ─── */}
+            {adminTab === "dashboard" && (
+              <div className="fade-in">
+                <h2 style={{ fontSize: 26, fontWeight: 800, color: "#2d1a0a", marginBottom: 6 }}>Good day! 🌼</h2>
+                <p style={{ color: "#999", fontSize: 14, marginBottom: 24 }}>Here's your Daisy Café overview</p>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16, marginBottom: 28 }}>
+                  {[
+                    { icon: "💰", label: "Total Revenue", value: formatPHP(totalRevenue), color: "#10b981", bg: "#f0fdf4" },
+                    { icon: "📦", label: "Total Orders", value: orders.length, color: "#3b82f6", bg: "#eff6ff" },
+                    { icon: "⏳", label: "Pending Orders", value: pendingCount, color: "#f59e0b", bg: "#fffbeb" },
+                    { icon: "🍽️", label: "Menu Items", value: menu.length, color: "#b85c38", bg: "#fff8f3" },
+                  ].map((s) => (
+                    <div key={s.label} className="card" style={{ background: s.bg, border: `1.5px solid ${s.color}22` }}>
+                      <div style={{ fontSize: 28, marginBottom: 4 }}>{s.icon}</div>
+                      <div style={{ fontSize: 28, fontWeight: 800, color: s.color }}>{s.value}</div>
+                      <div style={{ fontSize: 13, color: "#888", fontWeight: 600 }}>{s.label}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <h3 style={{ fontWeight: 800, color: "#2d1a0a", marginBottom: 14, fontSize: 17 }}>Recent Orders</h3>
+                <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+                  {orders.slice(0, 5).map((o, i) => (
+                    <div key={o.id} style={{ display: "flex", alignItems: "center", padding: "14px 18px", borderBottom: i < 4 ? "1px solid #f0e8e0" : "none", gap: 14 }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 700, fontSize: 14 }}>{o.id} — {o.customer}</div>
+                        <div style={{ fontSize: 12, color: "#999" }}>{o.items.map((x) => `${x.name} ×${x.qty}`).join(", ")}</div>
+                      </div>
+                      <div style={{ textAlign: "right" }}>
+                        <div style={{ fontWeight: 800, color: "#b85c38" }}>{formatPHP(o.total)}</div>
+                        <span className="badge" style={{ background: `${statusColor(o.status)}22`, color: statusColor(o.status) }}>{o.status}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ── ORDERS TAB ─── */}
+            {adminTab === "orders" && (
+              <div className="fade-in">
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+                  <h2 style={{ fontSize: 24, fontWeight: 800, color: "#2d1a0a" }}>📦 Orders</h2>
+                  <input className="input" placeholder="Search orders…" value={orderSearch} onChange={(e) => setOrderSearch(e.target.value)} style={{ width: 220 }} />
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  {filteredOrders.map((o) => (
+                    <div key={o.id} className="card fade-in" style={{ border: `2px solid ${statusColor(o.status)}33` }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+                        <div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+                            <span style={{ fontWeight: 800, fontSize: 16, color: "#b85c38" }}>{o.id}</span>
+                            <span className="badge" style={{ background: `${statusColor(o.status)}22`, color: statusColor(o.status) }}>{o.status}</span>
+                            {o.unread && <span className="badge" style={{ background: "#3b82f6", color: "white" }}>NEW</span>}
+                          </div>
+                          <p style={{ fontWeight: 700, fontSize: 15 }}>{o.customer}</p>
+                          <p style={{ fontSize: 13, color: "#888" }}>📞 {o.phone}</p>
+                          <p style={{ fontSize: 13, color: "#888" }}>📍 {o.address}</p>
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          <div style={{ fontSize: 22, fontWeight: 800, color: "#b85c38" }}>{formatPHP(o.total)}</div>
+                          <div style={{ fontSize: 12, color: "#aaa" }}>{o.time} · {o.date}</div>
+                          <div style={{ fontSize: 13, color: "#888", marginTop: 2 }}>
+                            {o.payment === "cash" ? "💵 Cash" : o.payment === "ewallet" ? "📱 E-Wallet" : "💳 Debit"}
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{ background: "#f9f4ef", borderRadius: 10, padding: "10px 14px", marginBottom: 14 }}>
+                        {o.items.map((it, i) => (
+                          <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "3px 0" }}>
+                            <span>{it.name} × {it.qty}</span>
+                            <span style={{ fontWeight: 600 }}>{formatPHP(it.price * it.qty)}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        {["Pending", "Preparing", "On the Way", "Delivered", "Cancelled"].map((s) => (
+                          <button key={s} className="btn-small" style={{ background: o.status === s ? statusColor(s) : `${statusColor(s)}22`, color: o.status === s ? "white" : statusColor(s), fontWeight: 700 }} onClick={() => updateOrderStatus(o.id, s)}>{s}</button>
+                        ))}
+                        <button className="btn-small" style={{ background: "#3b82f633", color: "#3b82f6", marginLeft: "auto" }} onClick={() => { setAdminTab("messages"); setActiveChat(o.phone); }}>💬 Message</button>
+                        <button className="btn-small" style={{ background: "#10b98133", color: "#10b981" }} onClick={() => window.open(`tel:${o.phone}`)}>📞 Call</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ── MENU MANAGER TAB ─── */}
+            {adminTab === "menu" && (
+              <div className="fade-in">
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+                  <h2 style={{ fontSize: 24, fontWeight: 800, color: "#2d1a0a" }}>🍽️ Menu Manager</h2>
+                  <button className="btn-primary" onClick={addMenuItem}>+ Add Item</button>
+                </div>
+                <div className="grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                  {menu.map((item) => (
+                    <div key={item.id} className="card fade-in" style={{ padding: 0, overflow: "hidden", opacity: item.available ? 1 : 0.5 }}>
+                      <div style={{ position: "relative" }}>
+                        <img src={item.image} alt={item.name} style={{ width: "100%", height: 150, objectFit: "cover" }} onError={(e) => e.target.src = "https://images.unsplash.com/photo-1461023058943-07fcbe16d735?w=400&q=80"} />
+                        <div style={{ position: "absolute", top: 8, right: 8, display: "flex", gap: 6 }}>
+                          <button className="btn-small" style={{ background: "rgba(255,255,255,0.95)", color: "#3b82f6", fontSize: 13 }} onClick={() => setEditItem({ ...item })}>✏️ Edit</button>
+                        </div>
+                        <div style={{ position: "absolute", top: 8, left: 8 }}>
+                          <span style={{ background: "#b85c38", color: "white", fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10 }}>{item.category}</span>
+                        </div>
+                      </div>
+                      <div style={{ padding: "12px 14px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <div>
+                            <p style={{ fontWeight: 700, fontSize: 15 }}>{item.name}</p>
+                            <p style={{ color: "#b85c38", fontWeight: 800, fontSize: 17 }}>{formatPHP(item.price)}</p>
+                          </div>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
+                            <button className="btn-small" style={{ background: item.available ? "#d1fae5" : "#fee2e2", color: item.available ? "#10b981" : "#ef4444" }} onClick={() => setMenu((m) => m.map((x) => x.id === item.id ? { ...x, available: !x.available } : x))}>
+                              {item.available ? "✓ Available" : "✗ Unavailable"}
+                            </button>
+                            <button className="btn-small" style={{ background: "#fee2e2", color: "#ef4444" }} onClick={() => deleteMenuItem(item.id)}>Delete</button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Edit Modal */}
+                {editItem && (
+                  <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+                    <div className="card slide-in" style={{ width: "100%", maxWidth: 480, maxHeight: "90vh", overflowY: "auto" }}>
+                      <h3 style={{ fontWeight: 800, fontSize: 18, color: "#b85c38", marginBottom: 20 }}>✏️ Edit Menu Item</h3>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                        <div>
+                          <label style={{ fontSize: 12, fontWeight: 700, color: "#888", display: "block", marginBottom: 4 }}>ITEM NAME</label>
+                          <input className="input" value={editItem.name} onChange={(e) => setEditItem({ ...editItem, name: e.target.value })} />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: 12, fontWeight: 700, color: "#888", display: "block", marginBottom: 4 }}>PRICE (₱)</label>
+                          <input className="input" type="number" value={editItem.price} onChange={(e) => setEditItem({ ...editItem, price: Number(e.target.value) })} />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: 12, fontWeight: 700, color: "#888", display: "block", marginBottom: 4 }}>CATEGORY</label>
+                          <select className="input" value={editItem.category} onChange={(e) => setEditItem({ ...editItem, category: e.target.value })}>
+                            <option>Coffee</option><option>Non-Coffee</option><option>Food</option><option>Dessert</option><option>Drinks</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label style={{ fontSize: 12, fontWeight: 700, color: "#888", display: "block", marginBottom: 4 }}>PRODUCT IMAGE URL</label>
+                          <input className="input" value={editItem.image} onChange={(e) => setEditItem({ ...editItem, image: e.target.value })} placeholder="https://..." />
+                          {editItem.image && <img src={editItem.image} alt="preview" style={{ width: "100%", height: 120, objectFit: "cover", borderRadius: 10, marginTop: 8 }} onError={(e) => e.target.style.display = "none"} />}
+                        </div>
+                        <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+                          <button className="btn-primary" style={{ flex: 1 }} onClick={saveEditItem}>Save Changes</button>
+                          <button className="btn-ghost" style={{ flex: 1 }} onClick={() => setEditItem(null)}>Cancel</button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── MESSAGES TAB ─── */}
+            {adminTab === "messages" && (
+              <div className="fade-in" style={{ display: "flex", gap: 16, height: "calc(100vh - 100px)" }}>
+                {/* Contacts List */}
+                <div className="card" style={{ width: 260, padding: 0, overflow: "hidden", flexShrink: 0 }}>
+                  <div style={{ padding: "16px 16px 12px", borderBottom: "1px solid #f0e8e0" }}>
+                    <h3 style={{ fontWeight: 800, color: "#b85c38", fontSize: 16 }}>💬 Messages</h3>
+                  </div>
+                  <div className="scroll-y" style={{ height: "calc(100% - 56px)" }}>
+                    {orders.map((o) => (
+                      <div key={o.phone} onClick={() => setActiveChat(o.phone)} style={{ padding: "14px 16px", borderBottom: "1px solid #f9f4ef", cursor: "pointer", background: activeChat === o.phone ? "#fff8f3" : "white", borderLeft: activeChat === o.phone ? "3px solid #d4845a" : "3px solid transparent", transition: "all 0.15s" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                          <div>
+                            <p style={{ fontWeight: 700, fontSize: 14 }}>{o.customer}</p>
+                            <p style={{ fontSize: 12, color: "#aaa" }}>{o.phone}</p>
+                          </div>
+                          {messages[o.phone]?.some((m) => m.from === "customer") && (
+                            <span style={{ width: 8, height: 8, background: "#3b82f6", borderRadius: "50%", marginTop: 4 }} />
+                          )}
+                        </div>
+                        <p style={{ fontSize: 12, color: "#888", marginTop: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {messages[o.phone]?.slice(-1)[0]?.text || "No messages yet"}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Chat Window */}
+                {activeChat ? (
+                  <div className="card" style={{ flex: 1, padding: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+                    {(() => {
+                      const cust = orders.find((o) => o.phone === activeChat);
+                      return (
+                        <>
+                          <div style={{ padding: "14px 20px", borderBottom: "1px solid #f0e8e0", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#fff8f3" }}>
+                            <div>
+                              <p style={{ fontWeight: 800, fontSize: 15 }}>{cust?.customer}</p>
+                              <p style={{ fontSize: 12, color: "#aaa" }}>{activeChat}</p>
+                            </div>
+                            <div style={{ display: "flex", gap: 8 }}>
+                              <button className="btn-small" style={{ background: "#10b98133", color: "#10b981" }} onClick={() => window.open(`tel:${activeChat}`)}>📞 Call</button>
+                              <button className="btn-small" style={{ background: "#3b82f633", color: "#3b82f6" }} onClick={() => window.open(`sms:${activeChat}`)}>📱 SMS</button>
+                            </div>
+                          </div>
+                          <div className="scroll-y" style={{ flex: 1, padding: 20, display: "flex", flexDirection: "column", gap: 12 }}>
+                            {(messages[activeChat] || []).map((m, i) => (
+                              <div key={i} style={{ display: "flex", justifyContent: m.from === "admin" ? "flex-end" : "flex-start" }}>
+                                <div style={{ maxWidth: "72%", padding: "10px 14px", borderRadius: m.from === "admin" ? "16px 16px 4px 16px" : "16px 16px 16px 4px", background: m.from === "admin" ? "linear-gradient(135deg, #b85c38, #d4845a)" : "#f0e8e0", color: m.from === "admin" ? "white" : "#2d1a0a", fontSize: 14 }}>
+                                  <p>{m.text}</p>
+                                  <p style={{ fontSize: 10, opacity: 0.7, marginTop: 4, textAlign: "right" }}>{m.time}</p>
+                                </div>
+                              </div>
+                            ))}
+                            <div ref={msgEndRef} />
+                          </div>
+                          <div style={{ padding: "14px 16px", borderTop: "1px solid #f0e8e0", display: "flex", gap: 10 }}>
+                            <input className="input" placeholder="Type a message…" value={chatMsg} onChange={(e) => setChatMsg(e.target.value)} onKeyDown={(e) => e.key === "Enter" && sendAdminMsg(activeChat)} style={{ flex: 1 }} />
+                            <button className="btn-primary" style={{ padding: "10px 18px" }} onClick={() => sendAdminMsg(activeChat)}>Send</button>
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                ) : (
+                  <div className="card" style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", color: "#bbb" }}>
+                    <div style={{ fontSize: 48, marginBottom: 12 }}>💬</div>
+                    <p style={{ fontWeight: 700 }}>Select a conversation</p>
+                    <p style={{ fontSize: 13 }}>Choose a customer to start messaging</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── CUSTOMERS TAB ─── */}
+            {adminTab === "customers" && (
+              <div className="fade-in">
+                <h2 style={{ fontSize: 24, fontWeight: 800, color: "#2d1a0a", marginBottom: 20 }}>👥 Customers</h2>
+                <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  {[...new Map(orders.map((o) => [o.phone, o])).values()].map((o) => {
+                    const custOrders = orders.filter((x) => x.phone === o.phone);
+                    const totalSpent = custOrders.reduce((s, x) => s + x.total, 0);
+                    return (
+                      <div key={o.phone} className="card">
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
+                          <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
+                            <div style={{ width: 48, height: 48, background: "linear-gradient(135deg, #d4845a, #b85c38)", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, color: "white", fontWeight: 800 }}>
+                              {o.customer[0]}
+                            </div>
+                            <div>
+                              <p style={{ fontWeight: 800, fontSize: 16 }}>{o.customer}</p>
+                              <p style={{ fontSize: 13, color: "#888" }}>📞 {o.phone}</p>
+                              <p style={{ fontSize: 13, color: "#888" }}>📍 {o.address}</p>
+                            </div>
+                          </div>
+                          <div style={{ textAlign: "right" }}>
+                            <p style={{ fontWeight: 800, fontSize: 18, color: "#b85c38" }}>{formatPHP(totalSpent)}</p>
+                            <p style={{ fontSize: 12, color: "#aaa" }}>{custOrders.length} order{custOrders.length > 1 ? "s" : ""}</p>
+                            <div style={{ display: "flex", gap: 6, marginTop: 8, justifyContent: "flex-end" }}>
+                              <button className="btn-small" style={{ background: "#10b98133", color: "#10b981" }} onClick={() => window.open(`tel:${o.phone}`)}>📞 Call</button>
+                              <button className="btn-small" style={{ background: "#3b82f633", color: "#3b82f6" }} onClick={() => { setAdminTab("messages"); setActiveChat(o.phone); }}>💬 Chat</button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
